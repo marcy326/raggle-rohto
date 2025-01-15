@@ -120,14 +120,21 @@ def rag_implementation(question: str) -> str:
         """
         try:
             text_splitter = CharacterTextSplitter(
-                separator="\n",
-                chunk_size=1000,
+                separator="\n\n",
+                chunk_size=800,
+                chunk_overlap=200,
+                length_function=len,
             )
             splitted_docs = []
             for doc in docs:
                 chunks = text_splitter.split_text(doc.page_content)
                 for chunk in chunks:
-                    splitted_docs.append(Document(page_content=chunk, metadata=doc.metadata))
+                    metadata = doc.metadata.copy()
+                    metadata['chunk_id'] = len(splitted_docs) + 1
+                    splitted_docs.append(Document(
+                        page_content=chunk,
+                        metadata=metadata
+                    ))
 
             embedding_function = OpenAIEmbeddings()
 
