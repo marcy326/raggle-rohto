@@ -50,6 +50,11 @@ def rag_implementation(question: str) -> str:
         - model 変数 と pdf_file_urls 変数は編集しないでください
         - 回答は日本語で生成してください
     """
+
+    # ログレベルの設定を追加
+    import logging
+    logging.getLogger('chromadb').setLevel(logging.ERROR)
+
     # 戻り値として質問に対する回答を返却してください。
     def download_and_load_pdfs(urls: list) -> list:
         """
@@ -152,8 +157,8 @@ def rag_implementation(question: str) -> str:
     retriever = db.as_retriever(
         search_type="mmr",
         search_kwargs={
-            "k": 5,
-            "fetch_k": 20
+            "k": 3,
+            "fetch_k": 10
         }
     )
 
@@ -175,12 +180,22 @@ def rag_implementation(question: str) -> str:
 
     prompt = ChatPromptTemplate.from_template(template)
 
-    chat = ChatOpenAI(model=model)
+    chat = ChatOpenAI(
+        model=model,
+        temperature=0,
+        max_tokens=1000,
+        top_p=0.9,
+        frequency_penalty=0.1,
+        presence_penalty=0.1 
+    )
 
     output_parser = StrOutputParser()
 
     setup_and_retrieval = RunnableParallel(
-        {"context": retriever, "question": RunnablePassthrough()}
+        {
+            "context": retriever | (lambda docs: "\n\n".join([d.page_content for d in docs][:3])),
+            "question": RunnablePassthrough()
+        }
     )
 
     chain = setup_and_retrieval | prompt | chat | output_parser
