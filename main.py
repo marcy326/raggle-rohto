@@ -148,7 +148,14 @@ def rag_implementation(question: str) -> str:
 
     docs = download_and_load_pdfs(pdf_file_urls)
     db = create_vectorstore(docs)
-    retriever = db.as_retriever()
+    
+    retriever = db.as_retriever(
+        search_type="mmr",
+        search_kwargs={
+            "k": 5,
+            "fetch_k": 20
+        }
+    )
 
     template = """
     # ゴール
