@@ -229,6 +229,56 @@ def rag_implementation(question: str) -> str:
         presence_penalty=0.1 
     )
 
+    # HyDE用のプロンプトテンプレート
+    hyde_template = """
+    あなたは専門的な情報検索システムの一部です。以下の質問に対して、以下のガイドラインに従って仮想的な回答を生成してください。
+
+    【ガイドライン】
+    1. 回答形式
+    - 質問の意図を正確に反映
+    - 専門用語を適切に使用
+    - 具体的な数値や事実を含む
+    - 150字以内で簡潔に
+
+    2. 内容
+    - 実際のデータに基づくのではなく、質問から推測される形式の回答
+    - 専門家が書いたような文体で
+    - 関連するキーワードを自然に含む
+
+    3. スタイル
+    - 「です・ます」調を使用
+    - 箇条書きではなく文章形式
+    - 受動態ではなく能動態
+
+    【例】
+    質問: 本社の所在地は？
+    回答: ロート製薬の本社は大阪府大阪市中央区道修町1丁目8番1号に所在しています。最寄り駅は地下鉄堺筋線の北浜駅で、徒歩約5分の場所に位置しています。
+
+    質問: 代表電話番号は？
+    回答: ロート製薬の代表電話番号は06-6758-1235です。受付時間は平日の9時から17時までとなっています。
+
+    【現在の質問】
+    {question}
+
+    【仮回答】
+    """
+    
+    # HyDEの実装
+    def generate_hypothetical_answer(question: str) -> str:
+        hyde_prompt = ChatPromptTemplate.from_template(hyde_template)
+        hyde_llm = ChatOpenAI(
+            temperature=0.7,
+            model=model,
+            max_tokens=200,
+            top_p=0.9,
+            frequency_penalty=0.2,
+            presence_penalty=0.2
+        )
+        hyde_chain = hyde_prompt | hyde_llm | StrOutputParser()
+        return hyde_chain.invoke({"question": question})
+
+    hypothetical_answer = generate_hypothetical_answer(question)
+
     # クエリ拡張の実装
     class LineListOutputParser(BaseOutputParser[List[str]]):
         """Output parser for a list of lines."""
@@ -260,7 +310,7 @@ def rag_implementation(question: str) -> str:
 
     # クエリ拡張を既存のパイプラインに統合
     expanded_queries = llm_chain.invoke({"question": question})
-    all_queries = [question] + expanded_queries  # 元の質問も含める
+    all_queries = [question, hypothetical_answer] + expanded_queries
 
     # 複数クエリでドキュメントを取得
     retrieved_docs = []
