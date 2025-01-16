@@ -180,7 +180,7 @@ def rag_implementation(question: str) -> str:
                 if vectorstore is None:
                     vectorstore = Chroma.from_documents(
                         documents=batch,
-                        embedding=OpenAIEmbeddings()
+                        embedding=OpenAIEmbeddings(model="text-embedding-3-large")
                     )
                 else:
                     vectorstore.add_documents(batch)
