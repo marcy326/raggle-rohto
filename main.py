@@ -135,17 +135,30 @@ def rag_implementation(question: str) -> str:
             Chroma(...)
         """
         try:
-            text_splitter = RecursiveCharacterTextSplitter(
+            # 2種類のテキストスプリッターを用意
+            large_chunk_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=2048,
                 chunk_overlap=512,
                 length_function=len,
             )
+            
+            small_chunk_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=64,  # 小さめのチャンクサイズ
+                chunk_overlap=16,
+                length_function=len,
+            )
             splitted_docs = []
             for doc in docs:
-                chunks = text_splitter.split_text(doc.page_content)
-                for chunk in chunks:
+                # 大きいチャンクと小さいチャンクの両方を生成
+                large_chunks = large_chunk_splitter.split_text(doc.page_content)
+                small_chunks = small_chunk_splitter.split_text(doc.page_content)
+
+                all_chunks = large_chunks + small_chunks
+
+                for chunk in all_chunks:
                     metadata = doc.metadata.copy()
                     metadata['chunk_id'] = len(splitted_docs) + 1
+                    metadata['chunk_size'] = 'large' if chunk in large_chunks else 'small'
                     splitted_docs.append(Document(
                         page_content=chunk,
                         metadata=metadata
@@ -158,12 +171,19 @@ def rag_implementation(question: str) -> str:
                     f.write(f"Source: {chunk.metadata['source']}\n")
                     f.write(f"Content:\n{chunk.page_content}\n\n")
             
-            embedding_function = OpenAIEmbeddings()
-
-            vectorstore = Chroma.from_documents(
-                splitted_docs,
-                embedding_function,
-            )
+            # バッチサイズを制限して分割処理
+            batch_size = 5000  # ChromaDBの制限以下に設定
+            vectorstore = None
+            
+            for i in range(0, len(splitted_docs), batch_size):
+                batch = splitted_docs[i:i + batch_size]
+                if vectorstore is None:
+                    vectorstore = Chroma.from_documents(
+                        documents=batch,
+                        embedding=OpenAIEmbeddings()
+                    )
+                else:
+                    vectorstore.add_documents(batch)
             return vectorstore
         except Exception as e:
             raise Exception(f"Error creating vectorstore: {e}")
