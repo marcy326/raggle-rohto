@@ -1,3 +1,5 @@
 *.pdf
 .env
 .venv
+original_pdf_*.txt
+chunked_documents.txt

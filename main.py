@@ -102,6 +102,10 @@ def rag_implementation(question: str) -> str:
                         if text:
                             full_text += text + "\n"
 
+                    # 元のPDFテキストをファイルに保存
+                    with open(f"original_pdf_{i}.txt", "w", encoding="utf-8") as f:
+                        f.write(full_text)
+
                     documents.append(
                         Document(
                             page_content=full_text,
@@ -147,6 +151,13 @@ def rag_implementation(question: str) -> str:
                         metadata=metadata
                     ))
 
+            # チャンキングされたデータをファイルに保存
+            with open("chunked_documents.txt", "w", encoding="utf-8") as f:
+                for i, chunk in enumerate(splitted_docs):
+                    f.write(f"=== Chunk {i+1} ===\n")
+                    f.write(f"Source: {chunk.metadata['source']}\n")
+                    f.write(f"Content:\n{chunk.page_content}\n\n")
+            
             embedding_function = OpenAIEmbeddings()
 
             vectorstore = Chroma.from_documents(
