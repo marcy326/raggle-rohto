@@ -18,6 +18,8 @@ from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import PromptTemplate
+from langchain.storage import InMemoryStore
+from langchain.retrievers import ParentDocumentRetriever
 
 # ==============================================================================
 # !!! 警告 !!!: 以下の変数を変更しないでください。
@@ -116,7 +118,7 @@ def rag_implementation(question: str) -> str:
         except Exception as e:
             raise Exception(f"Error reading {url}: {e}")
 
-    def create_vectorstore(docs: list) -> Chroma:
+    def setup_retriever(docs: list) -> Chroma:
         """
         テキストデータからベクトルストアを生成する関数
 
@@ -136,67 +138,37 @@ def rag_implementation(question: str) -> str:
         """
         try:
             # 2種類のテキストスプリッターを用意
-            large_chunk_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1024,
-                chunk_overlap=256,
+            parent_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=2048,
+                chunk_overlap=512,
                 length_function=len,
             )
             
-            small_chunk_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=128,  # 小さめのチャンクサイズ
+            child_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=128,
                 chunk_overlap=32,
                 length_function=len,
             )
-            splitted_docs = []
-            for doc in docs:
-                # 大きいチャンクと小さいチャンクの両方を生成
-                large_chunks = large_chunk_splitter.split_text(doc.page_content)
-                small_chunks = small_chunk_splitter.split_text(doc.page_content)
 
-                all_chunks = large_chunks + small_chunks
+            # ストレージの初期化
+            vectorstore = Chroma(embedding_function=OpenAIEmbeddings())
+            docstore = InMemoryStore()
 
-                for chunk in all_chunks:
-                    metadata = doc.metadata.copy()
-                    metadata['chunk_id'] = len(splitted_docs) + 1
-                    metadata['chunk_size'] = 'large' if chunk in large_chunks else 'small'
-                    splitted_docs.append(Document(
-                        page_content=chunk,
-                        metadata=metadata
-                    ))
-
-            # チャンキングされたデータをファイルに保存
-            with open("chunked_documents.txt", "w", encoding="utf-8") as f:
-                for i, chunk in enumerate(splitted_docs):
-                    f.write(f"=== Chunk {i+1} ===\n")
-                    f.write(f"Source: {chunk.metadata['source']}\n")
-                    f.write(f"Content:\n{chunk.page_content}\n\n")
+            # ParentDocumentRetrieverの初期化
+            retriever = ParentDocumentRetriever(
+                vectorstore=vectorstore,
+                docstore=docstore,
+                child_splitter=child_splitter,
+                parent_splitter=parent_splitter
+            )
             
-            # バッチサイズを制限して分割処理
-            batch_size = 5000  # ChromaDBの制限以下に設定
-            vectorstore = None
+            # ドキュメントを追加
+            retriever.add_documents(docs)
             
-            for i in range(0, len(splitted_docs), batch_size):
-                batch = splitted_docs[i:i + batch_size]
-                if vectorstore is None:
-                    vectorstore = Chroma.from_documents(
-                        documents=batch,
-                        embedding=OpenAIEmbeddings(model="text-embedding-3-large")
-                    )
-                else:
-                    vectorstore.add_documents(batch)
-            return vectorstore
+            return retriever
+
         except Exception as e:
             raise Exception(f"Error creating vectorstore: {e}")
-    
-    def setup_retriever(db: Chroma) -> Any:
-        """ベクトルストアから検索器を設定"""
-        return db.as_retriever(
-            search_type="mmr",
-            search_kwargs={
-                "k": 5,        # 取得するドキュメント数
-                "fetch_k": 10  # 初期検索ドキュメント数
-            }
-        )
     
     def generate_hypothetical_answer(question: str) -> str:
         """HyDEを用いて仮想回答を生成"""
@@ -293,7 +265,7 @@ def rag_implementation(question: str) -> str:
                 unique_docs.append(doc)
         return unique_docs
     
-    def setup_rag_chain() -> Any:
+    def setup_rag_chain(unique_docs: List[Document]) -> Any:
         """RAGパイプラインを構築"""
         template = """
         あなたは製薬企業の専門アシスタントです。以下のガイドラインに従って質問に答えてください。
@@ -380,7 +352,10 @@ def rag_implementation(question: str) -> str:
 
         setup_and_retrieval = RunnableParallel(
             {
-                "context": lambda _: "\n\n".join([d.page_content for d in unique_docs]),
+                "context": lambda _: "\n\n".join([
+                    f"【文脈 {i+1}/{len(unique_docs)}】\n{d.page_content}"
+                    for i, d in enumerate(unique_docs)
+                ]),
                 "question": RunnablePassthrough()
             }
         )
@@ -393,12 +368,9 @@ def rag_implementation(question: str) -> str:
 
     # PDFデータの読み込み
     docs = download_and_load_pdfs(pdf_file_urls)
-
-    # ベクトルストアの作成
-    db = create_vectorstore(docs)
     
     # 検索器の設定
-    retriever = setup_retriever(db)
+    retriever = setup_retriever(docs)
 
     # HyDEによる仮想回答生成
     hypothetical_answer = generate_hypothetical_answer(question)
@@ -414,7 +386,7 @@ def rag_implementation(question: str) -> str:
     unique_docs = remove_duplicate_docs(retrieved_docs)
 
     # RAGチェーンの構築
-    chain = setup_rag_chain()
+    chain = setup_rag_chain(unique_docs)
 
     # RAGチェーンの実行
     answer = chain.invoke(question)
