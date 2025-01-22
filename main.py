@@ -7,12 +7,13 @@ from dotenv import load_dotenv
 import requests
 import pdfplumber
 from typing import List, Any
+from pydantic import BaseModel, Field
 
 from langchain import callbacks
 from langchain.schema import Document
 from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import StrOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 from langchain_chroma import Chroma
@@ -233,6 +234,62 @@ def rag_implementation(question: str) -> str:
         llm = ChatOpenAI(temperature=0.3, model=model)
         llm_chain = QUERY_PROMPT | llm | LineListOutputParser()
         return llm_chain.invoke({"question": question})
+    
+    def rerank_documents(docs: List[Document], question: str) -> List[Document]:
+        """ドキュメントを再ランク付け"""
+        try:
+            class RankedIndices(BaseModel):
+                ranked_indices: List[int] = Field(
+                    ...,
+                    description="ランク付けされたドキュメントのインデックスリスト",
+                    example=[1, 4, 0, 3, 2]
+                )
+            
+            output_parser = PydanticOutputParser(pydantic_object=RankedIndices)
+            format_instructions = output_parser.get_format_instructions()
+
+            rerank_template = """
+            以下のドキュメントを、質問との関連性に基づいてランク付けしてください。
+            最も関連性の高いドキュメントを最初に、関連性の低いドキュメントを後に配置します。
+
+            質問: {question}
+
+            ドキュメント:
+            {documents}
+
+            ランク付けの基準:
+            1. 質問のキーワードとの一致度
+            2. 文脈的な関連性
+            3. 情報の具体性
+            4. 信頼性の高さ
+
+            出力形式:
+            {format_instructions}
+            """
+            
+            # ドキュメントを簡潔にまとめる
+            docs_concat = "\n\n".join([
+                f"【ドキュメント {i}】\n{d.page_content}..." 
+                for i, d in enumerate(docs)
+            ])
+            
+            prompt = ChatPromptTemplate.from_template(rerank_template)
+            llm = ChatOpenAI(temperature=0, model=model)
+            chain = prompt | llm | output_parser
+            
+            # ランク付け結果を取得
+            result = chain.invoke({
+                "question": question,
+                "documents": docs_concat,
+                "format_instructions": format_instructions
+            })
+            
+            # 結果をパースしてドキュメントを並べ替え
+            ranked_indices = [docs[i] for i in result.ranked_indices]
+            return ranked_indices
+        
+        except Exception as e:
+            return docs  # 失敗時は元の順序を保持
 
     def retrieve_documents(retriever: Any, queries: List[str]) -> List[Document]:
         """複数のクエリを使用して関連ドキュメントを取得"""
@@ -371,8 +428,11 @@ def rag_implementation(question: str) -> str:
     # 重複ドキュメントの削除
     unique_docs = remove_duplicate_docs(retrieved_docs)
 
+    # Reranking
+    reranked_docs = rerank_documents(unique_docs, question)
+
     # RAGチェーンの構築
-    chain = setup_rag_chain(unique_docs)
+    chain = setup_rag_chain(reranked_docs)
 
     # RAGチェーンの実行
     answer = chain.invoke(question)
