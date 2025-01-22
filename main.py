@@ -119,23 +119,7 @@ def rag_implementation(question: str) -> str:
             raise Exception(f"Error reading {url}: {e}")
 
     def setup_retriever(docs: list) -> Chroma:
-        """
-        テキストデータからベクトルストアを生成する関数
-
-        Args:
-            docs (list): Documentオブジェクトのリスト
-
-        Returns:
-            vectorstore (Chroma): ベクトルストア
-
-        Raises:
-            Exception: ベクトルストアの生成に失敗した場合に発生する例外
-
-        Examples:
-            >>> docs = [Document(page_content="...", metadata={"source": "https://example.com/example.pdf"})]
-            >>> create_vectorstore(docs)
-            Chroma(...)
-        """
+        """ParentDocumentRetrieverを使用したベクトル検索を設定"""
         try:
             # 2種類のテキストスプリッターを用意
             parent_splitter = RecursiveCharacterTextSplitter(
@@ -151,7 +135,9 @@ def rag_implementation(question: str) -> str:
             )
 
             # ストレージの初期化
-            vectorstore = Chroma(embedding_function=OpenAIEmbeddings())
+            vectorstore = Chroma(
+                embedding_function=OpenAIEmbeddings(model="text-embedding-3-large")
+            )
             docstore = InMemoryStore()
 
             # ParentDocumentRetrieverの初期化
