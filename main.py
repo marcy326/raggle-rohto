@@ -163,15 +163,16 @@ def rag_implementation(question: str) -> str:
                     continue
             
             return cropped_page.extract_text() or ""
+        
+        def download_pdf(url, save_path):
+            response = requests.get(url)
+            if response.status_code == 200:
+                with open(save_path, 'wb') as f:
+                    f.write(response.content)
+            else:
+                raise Exception(f"Failed to download {url}")
 
         try:
-            def download_pdf(url, save_path):
-                response = requests.get(url)
-                if response.status_code == 200:
-                    with open(save_path, 'wb') as f:
-                        f.write(response.content)
-                else:
-                    raise Exception(f"Failed to download {url}")
             documents = []
 
             for i, url in enumerate(urls):
