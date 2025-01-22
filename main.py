@@ -65,7 +65,6 @@ def rag_implementation(question: str) -> str:
     # データ処理関数群
     # ============================================================
 
-    # 戻り値として質問に対する回答を返却してください。
     def download_and_load_pdfs(urls: list) -> list:
         """
         PDFファイルをダウンロードして読み込む関数
@@ -84,6 +83,87 @@ def rag_implementation(question: str) -> str:
             >>> download_and_load_pdfs(urls)
             [Document(page_content="...", metadata={"source": "https://example.com/example.pdf"})]
         """
+
+        def extract_tables_as_markdown(page) -> tuple[str, list]:
+            """
+            PDFページからテーブルを抽出し、Markdown形式に変換する関数
+
+            Args:
+                page: pdfplumberのページオブジェクト
+
+            Returns:
+                tuple: (Markdown形式のテーブル文字列, テーブル領域のリスト)
+            """
+            markdown_tables = ""
+            table_areas = []
+            tables = page.find_tables()
+            
+            for table in tables:
+                if table:
+                    # テーブル領域を記録
+                    bbox = (
+                        max(0, table.bbox[0]),  # x0
+                        max(0, table.bbox[1]),  # y0
+                        min(page.width, table.bbox[2]),  # x1
+                        min(page.height, table.bbox[3])  # y1
+                    )
+                    table_areas.append(bbox)
+                    
+                    # テーブルデータを抽出
+                    table_data = table.extract()
+                    
+                    if table_data:
+                        # セルデータを整理
+                        sanitized_table = [[sanitize_cell(cell) for cell in row] for row in table_data]
+                        
+                        # Markdownテーブル作成
+                        md_table = "| " + " | ".join(sanitized_table[0]) + " |\n"
+                        md_table += "| " + " | ".join(["---"] * len(sanitized_table[0])) + " |\n"
+                        for row in sanitized_table[1:]:
+                            md_table += "| " + " | ".join(row) + " |\n"
+                        markdown_tables += "\n" + md_table + "\n"
+            
+            return markdown_tables, table_areas
+
+        def sanitize_cell(cell) -> str:
+            """
+            セルの内容を整理する
+
+            Args:
+                cell: テーブルセルの内容
+
+            Returns:
+                str: 整理されたセル内容
+            """
+            if cell is None:
+                return ""
+            return ' '.join(str(cell).split())
+
+        def extract_text_excluding_tables(page, table_areas) -> str:
+            """
+            テーブル領域を除外してテキストを抽出する関数
+
+            Args:
+                page: pdfplumberのページオブジェクト
+                table_areas: 除外するテーブル領域のリスト
+
+            Returns:
+                str: テーブル領域を除外したテキスト
+            """
+            if not table_areas:
+                return page.extract_text() or ""
+            
+            # テーブル領域をマスク
+            cropped_page = page
+            for area in table_areas:
+                try:
+                    cropped_page = cropped_page.outside_bbox(area)
+                except ValueError:
+                    # 境界ボックスがページ外に出ている場合、スキップ
+                    continue
+            
+            return cropped_page.extract_text() or ""
+
         try:
             def download_pdf(url, save_path):
                 response = requests.get(url)
@@ -101,9 +181,16 @@ def rag_implementation(question: str) -> str:
                 with pdfplumber.open(tmp_path) as pdf:
                     full_text = ""
                     for page in pdf.pages:
-                        text = page.extract_text()
+                        # テーブルを先に抽出
+                        markdown_tables, table_areas = extract_tables_as_markdown(page)
+                        
+                        # テーブル領域を除外してテキストを抽出
+                        text = extract_text_excluding_tables(page, table_areas)
                         if text:
                             full_text += text + "\n"
+                        
+                        # テーブルを追加
+                        full_text += markdown_tables
 
                     # 元のPDFテキストをファイルに保存
                     with open(f"original_pdf_{i}.txt", "w", encoding="utf-8") as f:
@@ -116,6 +203,7 @@ def rag_implementation(question: str) -> str:
                         )
                     )
             return documents
+        
         except Exception as e:
             raise Exception(f"Error reading {url}: {e}")
 
@@ -326,15 +414,11 @@ def rag_implementation(question: str) -> str:
         - 関連する重要な情報を過不足なく含める
         - ユーザーが求める情報を的確に提供
 
-        3. 構成
+        3. 簡潔性
         - 具体的な説明はしない
         - 結論のみを簡潔に述べる
-        - 箇条書きではなく文章形式で
         - 100字以内で簡潔に
-
-        4. スタイル
         - 質問文を繰り返さない
-        - 受動態ではなく能動態を使用
 
         5. コンテキスト管理
         - 参考情報にない質問には回答しない
